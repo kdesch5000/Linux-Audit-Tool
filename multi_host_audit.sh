@@ -173,16 +173,49 @@ run_audit_with_analysis() {
         echo ""
     } > "$audit_log"
 
+    # Check if this is localhost to avoid SSH
+    local is_localhost=false
+    local current_hostname=$(hostname)
+    local current_fqdn=$(hostname -f 2>/dev/null || hostname)
+    local hostname_ip=$(getent hosts "$hostname" 2>/dev/null | awk '{print $1}' | head -1)
+    local current_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+
+    if [[ "$hostname" == "localhost" || "$hostname" == "127.0.0.1" || "$hostname" == "$current_hostname" || "$hostname" == "$current_fqdn" ]]; then
+        is_localhost=true
+        echo "✓ Detected localhost - running commands locally without SSH"
+    elif [[ -n "$hostname_ip" && -n "$current_ip" && "$hostname_ip" == "$current_ip" ]]; then
+        is_localhost=true
+        echo "✓ Detected localhost ($hostname resolves to $hostname_ip) - running commands locally without SSH"
+    elif [[ "$hostname_ip" == "127.0.0.1" || "$hostname_ip" =~ ^192\.168\. || "$hostname_ip" =~ ^10\. ]]; then
+        # Additional check for local network IPs that might be this host
+        if ping -c 1 -W 1 "$hostname" >/dev/null 2>&1 && [[ "$hostname" =~ \.(mf|mrfish\.net)$ ]]; then
+            is_localhost=true
+            echo "✓ Detected localhost (local domain $hostname) - running commands locally without SSH"
+        fi
+    fi
+
     # Function to run remote commands and log results
     run_remote() {
         local description="$1"
         local command="$2"
         echo "--- $description ---" >> "$audit_log"
-        if ssh -4 -o ConnectTimeout=30 -o BatchMode=yes -p "$port" "$user@$hostname" "$command" >> "$audit_log" 2>&1; then
-            echo "✓ $description completed"
+
+        if [[ "$is_localhost" == true ]]; then
+            # Run locally without SSH
+            if eval "$command" >> "$audit_log" 2>&1; then
+                echo "✓ $description completed (localhost)"
+            else
+                echo "⚠ $description failed or limited access"
+                echo "Command failed or access limited" >> "$audit_log"
+            fi
         else
-            echo "⚠ $description failed or limited access"
-            echo "Command failed or access limited" >> "$audit_log"
+            # Run via SSH
+            if ssh -4 -o ConnectTimeout=30 -o BatchMode=yes -p "$port" "$user@$hostname" "$command" >> "$audit_log" 2>&1; then
+                echo "✓ $description completed"
+            else
+                echo "⚠ $description failed or limited access"
+                echo "Command failed or access limited" >> "$audit_log"
+            fi
         fi
         echo "" >> "$audit_log"
     }
@@ -270,10 +303,13 @@ generate_ai_analysis() {
         # Extract key metrics for analysis
         local load_avg=$(grep -A1 "UPTIME AND LOAD" "$audit_log" | tail -1 | sed -n 's/.*load average: \([0-9.]*\).*/\1/p')
         local mem_usage=$(grep -A2 "MEMORY USAGE" "$audit_log" | grep "Mem:" | awk '{print $3 "/" $2}')
-        local failed_logins=$(grep -c "Failed password" "$audit_log" 2>/dev/null || echo "0")
+        local failed_logins=$(grep -A30 "FAILED LOGIN ATTEMPTS" "$audit_log" | grep -v "sudo:" | grep -c "Failed password for" 2>/dev/null || echo "0")
         local listening_ports=$(grep -A20 "LISTENING PORTS" "$audit_log" | grep -c "LISTEN" 2>/dev/null || echo "0")
         local failed_services=$(grep -A10 "FAILED SERVICES" "$audit_log" | grep -c "failed" 2>/dev/null || echo "0")
+        local failed_service_names=$(grep -A20 "FAILED SERVICES" "$audit_log" | grep "● " | awk '{print $2}' | tr '\n' ', ' | sed 's/,$//' 2>/dev/null || echo "")
         local security_updates=$(grep -A10 "SECURITY UPDATES" "$audit_log" | grep -c "security" 2>/dev/null || echo "0")
+        local listening_port_details=$(grep -A30 "LISTENING PORTS" "$audit_log" | grep -E ":(22|80|443|8080|3306|5432|21|25|53|110|143|993|995)" | head -10 | tr '\n' '; ' | sed 's/;$//' 2>/dev/null || echo "")
+        local failed_login_details=$(grep -A30 "FAILED LOGIN ATTEMPTS" "$audit_log" | grep -v "sudo:" | grep -E "Failed password for" | head -5 | sed 's/.*Failed password for invalid user /INVALID: /' | sed 's/.*Failed password for //' | awk '{print $1 " (" $3 " " $4 ")"}' | tr '\n' '; ' | sed 's/;$//' 2>/dev/null || echo "")
 
         # System Health Analysis
         echo "SYSTEM HEALTH:"
@@ -294,14 +330,23 @@ generate_ai_analysis() {
         echo "SECURITY ASSESSMENT:"
         if [[ "$failed_logins" -gt 5 ]]; then
             echo "🚨 CRITICAL: $failed_logins failed login attempts detected - possible brute force attack"
+            if [[ -n "$failed_login_details" ]]; then
+                echo "    Recent attempts: $failed_login_details"
+            fi
         elif [[ "$failed_logins" -gt 0 ]]; then
             echo "⚠️  WARNING: $failed_logins failed login attempts detected"
+            if [[ -n "$failed_login_details" ]]; then
+                echo "    Recent attempts: $failed_login_details"
+            fi
         else
             echo "✅ No recent failed login attempts"
         fi
 
         if [[ "$failed_services" -gt 0 ]]; then
             echo "⚠️  WARNING: $failed_services failed services detected"
+            if [[ -n "$failed_service_names" ]]; then
+                echo "    Failed services: $failed_service_names"
+            fi
         else
             echo "✅ All services running normally"
         fi
@@ -313,6 +358,9 @@ generate_ai_analysis() {
         fi
 
         echo "ℹ️  Network exposure: $listening_ports listening ports detected"
+        if [[ -n "$listening_port_details" ]]; then
+            echo "    Key services: $listening_port_details"
+        fi
         echo ""
 
         # Risk Assessment
@@ -348,6 +396,9 @@ generate_ai_analysis() {
 
         if [[ "$failed_logins" -gt 5 ]]; then
             echo "1. 🔒 IMMEDIATE: Review failed login sources and consider IP blocking"
+            if [[ -n "$failed_login_details" ]]; then
+                echo "   Target accounts: $failed_login_details"
+            fi
             echo "2. 🔐 Strengthen authentication (disable password auth, use key-only)"
         fi
 
@@ -356,7 +407,11 @@ generate_ai_analysis() {
         fi
 
         if [[ "$failed_services" -gt 0 ]]; then
-            echo "4. 🔧 Investigate and resolve $failed_services failed services"
+            if [[ -n "$failed_service_names" ]]; then
+                echo "4. 🔧 Investigate and resolve failed services: $failed_service_names"
+            else
+                echo "4. 🔧 Investigate and resolve $failed_services failed services"
+            fi
         fi
 
         if [[ -n "$load_avg" && $(echo "$load_avg > 1.5" | bc -l 2>/dev/null) == "1" ]]; then
