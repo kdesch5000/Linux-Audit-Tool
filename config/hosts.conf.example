@@ -1,0 +1,83 @@
+# Multi-Host Configuration for Linux Audit Tool
+#
+# Copy this file to hosts.conf and customize with your server details
+# Define multiple hosts to audit in the format:
+# [host_name]
+# hostname=server.domain.com
+# port=22
+# user=username
+# email=notifications@domain.com
+# schedule=daily|weekly|monthly
+# schedule_time=HH:MM (24-hour format)
+# schedule_day=1-7 (for weekly: 1=Monday, 7=Sunday) or 1-31 (for monthly)
+# enabled=true|false
+
+[server1]
+hostname=server1.example.com
+port=22
+user=admin
+email=admin@example.com
+schedule=weekly
+schedule_time=16:01
+schedule_day=2
+enabled=true
+
+[server2]
+hostname=server2.example.com
+port=2222
+user=sysadmin
+email=admin@example.com
+schedule=weekly
+schedule_time=16:03
+schedule_day=2
+enabled=true
+
+[database_server]
+hostname=db.example.com
+port=22
+user=dbadmin
+email=admin@example.com
+schedule=weekly
+schedule_time=16:05
+schedule_day=2
+enabled=true
+
+[web_server]
+hostname=web.example.com
+port=22
+user=webuser
+email=admin@example.com
+schedule=weekly
+schedule_time=16:07
+schedule_day=2
+enabled=true
+
+[monitoring_server]
+hostname=monitor.example.com
+port=22
+user=monitoring
+email=admin@example.com
+schedule=weekly
+schedule_time=16:09
+schedule_day=2
+enabled=true
+
+[backup_server]
+hostname=backup.example.com
+port=22
+user=backup
+email=admin@example.com
+schedule=weekly
+schedule_time=16:11
+schedule_day=2
+enabled=true
+
+[test_server]
+hostname=test.example.com
+port=22
+user=testuser
+email=admin@example.com
+schedule=weekly
+schedule_time=16:13
+schedule_day=2
+enabled=false
