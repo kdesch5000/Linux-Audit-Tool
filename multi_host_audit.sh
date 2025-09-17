@@ -186,12 +186,6 @@ run_audit_with_analysis() {
     elif [[ -n "$hostname_ip" && -n "$current_ip" && "$hostname_ip" == "$current_ip" ]]; then
         is_localhost=true
         echo "✓ Detected localhost ($hostname resolves to $hostname_ip) - running commands locally without SSH"
-    elif [[ "$hostname_ip" == "127.0.0.1" || "$hostname_ip" =~ ^192\.168\. || "$hostname_ip" =~ ^10\. ]]; then
-        # Additional check for local network IPs that might be this host
-        if ping -c 1 -W 1 "$hostname" >/dev/null 2>&1 && [[ "$hostname" =~ \.(mf|mrfish\.net)$ ]]; then
-            is_localhost=true
-            echo "✓ Detected localhost (local domain $hostname) - running commands locally without SSH"
-        fi
     fi
 
     # Function to run remote commands and log results
